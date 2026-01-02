@@ -1,61 +1,69 @@
 import os
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from PIL import Image
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 user_images = {}
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["Rasmni PDFga aylantirish"]]
-    await update.message.reply_text(
-        "Start ✅\n\nRasmlarni ketma-ket yuboring, keyin PDF qilib beraman.",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text(
+        "👋 Salom!\n\n"
+        "📸 Bir nechta rasm yuboring.\n"
+        "📄 Keyin /pdf deb yozing — men PDF qilib beraman."
     )
+    user_images[update.effective_user.id] = []
 
-async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
+def handle_photo(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+
+    if user_id not in user_images:
+        user_images[user_id] = []
+
     photo = update.message.photo[-1]
-    file = await context.bot.get_file(photo.file_id)
+    file = photo.get_file()
 
-    os.makedirs(f"temp/{user_id}", exist_ok=True)
-    image_path = f"temp/{user_id}/{photo.file_id}.jpg"
-    await file.download_to_drive(image_path)
+    image_path = f"{user_id}_{len(user_images[user_id])}.jpg"
+    file.download(image_path)
 
-    user_images.setdefault(user_id, []).append(image_path)
-    await update.message.reply_text("✅ Rasm qabul qilindi. Yana yuboring yoki /pdf deb yozing.")
+    user_images[user_id].append(image_path)
+    update.message.reply_text("✅ Rasm qabul qilindi")
 
-async def make_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
+def make_pdf(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
     images = user_images.get(user_id)
 
     if not images:
-        await update.message.reply_text("❌ Avval rasmlar yuboring.")
+        update.message.reply_text("❌ Avval rasm yuboring")
         return
 
-    pil_images = [Image.open(img).convert("RGB") for img in images]
-    pdf_path = f"temp/{user_id}/result.pdf"
+    pil_images = []
+    for img in images:
+        image = Image.open(img).convert("RGB")
+        pil_images.append(image)
+
+    pdf_path = f"{user_id}.pdf"
     pil_images[0].save(pdf_path, save_all=True, append_images=pil_images[1:])
 
-    await update.message.reply_document(document=open(pdf_path, "rb"))
+    update.message.reply_document(open(pdf_path, "rb"))
 
-    # cleanup
+    # tozalash
     for img in images:
         os.remove(img)
     os.remove(pdf_path)
-    os.rmdir(f"temp/{user_id}")
-    user_images.pop(user_id)
+    user_images[user_id] = []
 
-async def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+def main():
+    updater = Updater(BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("pdf", make_pdf))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_image))
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("pdf", make_pdf))
+    dp.add_handler(MessageHandler(Filters.photo, handle_photo))
 
-    await app.run_polling()
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
